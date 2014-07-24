@@ -1,22 +1,21 @@
 # coding: utf8
 
 import copy
+import types
 import threading
 
 from bson.objectid import ObjectId
 
 from .base import generate_field, get_collection_name
 from .queue import flush_queue
-from .session import ClientSession, ReplicaSetSession
+from .session import session
 from .consts import (
     QUERY_FIND, QUERY_FIND_ONE, INSERT,
     UPDATE, ID, ASCENDING, DESCENDING
 )
 from operators import Element, Logical, Comparison
 
-_lock = threading.Lock()
 _queue_lock = threading.Lock()
-session = None
 
 
 def _push_flush_queue(model):
@@ -64,31 +63,6 @@ def flush():
         flush_queue.clear()
 
 
-def create_replica_set_session(db_uri, db_config, **kwargs):
-    """
-    Create a new connection to a MongoDB replica set.
-    """
-    with _lock:
-        global session
-        if session:
-            session.close()
-        session = ReplicaSetSession(db_uri, db_config, **kwargs)
-
-
-def create_session(host, port=27017, max_pool_size=100,
-                   db_config=None, **kwargs):
-    """
-    Create a new connection to a single MongoDB instance at host:port.
-    """
-    with _lock:
-        global session
-        if session:
-            session.close()
-        session = ClientSession(
-            host, port, max_pool_size, db_config=None, **kwargs
-        )
-
-
 class Field(object):
     def __init__(self, field_type, default=None, value=None):
         assert isinstance(field_type, type), "unknown type for field"
@@ -117,7 +91,10 @@ class BaseModel(object):
                             __parent__=self, __fieldname__=field
                         )
                     else:
-                        v = copy.deepcopy(value.default)
+                        if isinstance(value.default, types.FunctionType):
+                            v = value.default()
+                        else:
+                            v = copy.deepcopy(value.default)
                 setattr(self, field, v)
 
     def __setattr__(self, key, value):
@@ -136,12 +113,17 @@ class BaseModel(object):
 
     def _normalize_field_value(self, field_type, value):
         if value is not None and not isinstance(value, field_type):
-            try:
-                value = field_type(value)
-            except:
-                raise ValueError("ValueError:%s value:%s" % (
-                    self.__class__.__name__, value
-                ))
+            if field_type is str and isinstance(value, unicode):
+                value = value.encode("utf8", "ignore")
+            elif field_type is unicode and isinstance(value, str):
+                value = value.decode("utf8", "ignore")
+            else:
+                try:
+                    value = field_type(value)
+                except:
+                    raise ValueError("ValueError:%s value:%s" % (
+                        self.__class__.__name__, value
+                    ))
         return value
 
     @classmethod

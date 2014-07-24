@@ -1,6 +1,11 @@
 # coding: utf8
 
+import threading
+
 import pymongo
+
+_lock = threading.Lock()
+session = None
 
 
 class Session(object):
@@ -36,4 +41,29 @@ class ClientSession(Session):
         super(ClientSession, self).__init__(**kwargs)
         self.session = pymongo.mongo_client.mongo_client(
             host, port, max_pool_size, **kwargs
+        )
+
+
+def create_replica_set_session(db_uri, db_config, **kwargs):
+    """
+    Create a new connection to a MongoDB replica set.
+    """
+    with _lock:
+        global session
+        if session:
+            session.close()
+        session = ReplicaSetSession(db_uri, db_config, **kwargs)
+
+
+def create_session(host, port=27017, max_pool_size=100,
+                   db_config=None, **kwargs):
+    """
+    Create a new connection to a single MongoDB instance at host:port.
+    """
+    with _lock:
+        global session
+        if session:
+            session.close()
+        session = ClientSession(
+            host, port, max_pool_size, db_config=None, **kwargs
         )
