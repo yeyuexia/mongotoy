@@ -3,12 +3,13 @@
 import copy
 import types
 import threading
+import datetime
 
 from bson.objectid import ObjectId
 
 from .base import generate_field, get_collection_name
 from .queue import flush_queue
-from .session import session
+from .session import get_session
 from .consts import (
     QUERY_FIND, QUERY_FIND_ONE, INSERT,
     UPDATE, ID, ASCENDING, DESCENDING
@@ -34,6 +35,7 @@ def flush():
     push all change to mongo db. It is a block operator so would be takes some time.
     """
     with _queue_lock:
+        session = get_session()
         insert_models = {}
         update_models = []
         for model in flush_queue.get_all():
@@ -56,10 +58,11 @@ def flush():
         for model in update_models:
             update_command = model.to_dict()
             del update_command[ID]
-            model.execute(collection_name, UPDATE, dict(
-                query={ID: model._id},
-                update=update_command
-            ))
+            session.execute(
+                model.__collectionname__, UPDATE,
+                dict(spec={ID: model._id},
+                     document=update_command)
+            )
         flush_queue.clear()
 
 
@@ -81,6 +84,7 @@ class Field(object):
 
 class BaseModel(object):
     def __init__(self, **kwargs):
+        self.__persistence__ = kwargs.get("__persistence__", False)
         for field, value in self.__class__.__dict__.iteritems():
             if isinstance(value, Field):
                 if field in kwargs:
@@ -88,7 +92,8 @@ class BaseModel(object):
                 else:
                     if issubclass(value.field_type, SubModel):
                         v = value.field_type(
-                            __parent__=self, __fieldname__=field
+                            __parent__=self, __fieldname__=field,
+                            __persistence__=self.__persistence__
                         )
                     else:
                         if isinstance(value.default, types.FunctionType):
@@ -96,14 +101,16 @@ class BaseModel(object):
                         else:
                             v = copy.deepcopy(value.default)
                 setattr(self, field, v)
+        self.__persistence__ = False
 
     def __setattr__(self, key, value):
         if key in self.__class__.__dict__:
             field = self.__class__.__dict__[key]
             if isinstance(field, Field):
-                value = self._normalize_field_value(field.field_type, value)
+                value = self._normalize_field_value(field, value)
                 super(BaseModel, self).__setattr__(key, value)
-                _push_flush_queue(self)
+                if not self.__persistence__:
+                    _push_flush_queue(self)
             else:
                 # TODO:
 
@@ -111,15 +118,23 @@ class BaseModel(object):
         else:
             super(BaseModel, self).__setattr__(key, value)
 
-    def _normalize_field_value(self, field_type, value):
-        if value is not None and not isinstance(value, field_type):
-            if field_type is str and isinstance(value, unicode):
+    def _normalize_field_value(self, field, value):
+        if value is not None and not isinstance(value, field.field_type):
+            if field.field_type is str and isinstance(value, unicode):
                 value = value.encode("utf8", "ignore")
-            elif field_type is unicode and isinstance(value, str):
+            elif field.field_type is unicode and isinstance(value, str):
                 value = value.decode("utf8", "ignore")
+            elif field.field_type is datetime.datetime:
+                value = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S")
+            elif issubclass(field.field_type, SubModel):
+                value = field.field_type(
+                    __parent__=self, __fieldname__=field,
+                    __persistence__=self.__persistence__,
+                    **value
+                )
             else:
                 try:
-                    value = field_type(value)
+                    value = field.field_type(value)
                 except:
                     raise ValueError("ValueError:%s value:%s" % (
                         self.__class__.__name__, value
@@ -140,7 +155,7 @@ class BaseModel(object):
         for key, value in kwargs.iteritems():
             cls.assert_vaild_field(key)
             field_type = cls.__dict__[key].field_type
-            if not isinstance(value, field_type):
+            if field_type is not list and not isinstance(value, field_type):
                 if isinstance(value, Comparison) or isinstance(value, Element):
                     value = value.compile()
                 elif (
@@ -153,7 +168,7 @@ class BaseModel(object):
                         value = field_type(value)
                     except:
                         raise ValueError("ValueError: %s.%s value:%s" % (
-                            cls.R_class__.__name__, key, value
+                            cls.__class__.__name__, key, value
                         ))
             query[key] = value
         for arg in args:
@@ -179,6 +194,14 @@ class BaseModel(object):
             *args, **kwargs
         ))()
 
+    def update(self, **kwargs):
+        """
+        update model
+        """
+        for key, value in kwargs.iteritems():
+            if value:
+                setattr(self, key, value)
+
     def to_dict(self):
         """
         gather all field values into a dict
@@ -189,6 +212,8 @@ class BaseModel(object):
                 value = getattr(self, field)
                 if issubclass(v.field_type, SubModel):
                     res[field] = value.to_dict()
+                elif field == "_id":
+                    res[field] = str(value)
                 else:
                     res[field] = value
         return res
@@ -224,9 +249,23 @@ class Model(BaseModel):
         """
         get a model instance by id
         """
+        if cls.__collectionname__ is None:
+            cls.__collectionname__ = get_collection_name(cls.__name__)
         return QueryOne(cls, query=cls._generate_query_context(
             _id=model_id
         ))()
+
+    @classmethod
+    def get_by(cls, *args, **kwargs):
+        if cls.__collectionname__ is None:
+            cls.__collectionname__ = get_collection_name(cls.__name__)
+        return super(Model, cls).get_by(*args, **kwargs)
+
+    @classmethod
+    def query(cls, *args, **kwargs):
+        if cls.__collectionname__ is None:
+            cls.__collectionname__ = get_collection_name(cls.__name__)
+        return super(Model, cls).query(*args, **kwargs)
 
 
 class SubModel(BaseModel):
@@ -234,8 +273,8 @@ class SubModel(BaseModel):
     __fieldname__ = None
 
     def __init__(self, **kwargs):
-        self.__parent__ = kwargs.get("__parent__")
-        self.__fieldname__ = kwargs.get("__fieldname__")
+        self.__parent__ = kwargs.pop("__parent__")
+        self.__fieldname__ = kwargs.pop("__fieldname__")
         super(SubModel, self).__init__(**kwargs)
 
 
@@ -268,10 +307,20 @@ class BaseQuery(object):
             for key in ("spec", "fields", "sort"):
                 values = commands[key]
                 if values:
-                    values = [
-                        generate_field(self.__fieldname__, v) for v in values
-                    ]
-                commands[key] = values
+                    if isinstance(values, (list, tuple)):
+                        commands[key] = [
+                            generate_field(self.__fieldname__, v) for v in values
+                        ]
+                    elif isinstance(values, dict):
+                        new_values = dict()
+                        for k, v in values.iteritems():
+                            k = generate_field(self.__fieldname__, k)
+                            new_values[k] = v
+                        commands[key] = new_values
+                    else:
+                        commands[key] = generate_field(
+                            self.__fieldname__, values
+                        )
         else:
             commands["timeout"] = False
         return commands
@@ -335,8 +384,8 @@ class Query(BaseQuery):
         return (collection, operation, self.get_commands())
 
     def execute_context(self, context):
-        for record in session.execute(*context):
-            yield self.model.__class__(**record)
+        for record in get_session().execute(*context):
+            yield self.model.__class__(__persistence__=True, **record)
 
     def all(self):
         """
@@ -357,20 +406,22 @@ class Query(BaseQuery):
         update model
         """
         update = Update(self.model,
-                        query=self.get_commands()["spec"],
-                        update=kwargs,
+                        spec=self.get_commands()["spec"],
+                        document=kwargs,
                         multi=True,
                         upsert=if_not_create)
-        return session.execute(*update.compile_context())
+        return get_session().execute(*update.compile_context())
 
 
 class QueryOne(BaseQuery):
+
     def compile_context(self):
         collection = self.model.__collectionname__
-        return (collection, QUERY_FIND_ONE, self.get_commands())
+        return (collection, QUERY_FIND, self.get_commands())
 
     def execute_context(self, context):
-        return self.model.__class__(session.execute(*context))
+        for result in get_session().execute(*context).limit(-1):
+            return self.model(__persistence__=True, **result)
 
     def __call__(self):
         return self.execute_context(self.compile_context())
@@ -386,25 +437,25 @@ class Update(object):
         multi:
         upsert:
     """
-    def __init__(self, model, query, update, multi, upsert):
+    def __init__(self, model, spec, document, multi, upsert):
         self.model = model
-        self.query = query
-        self.update = update
+        self.spec = spec
+        self.document = document
         self.multi = multi
         self.upsert = upsert
 
     def _generate_commands(self, model, **kwargs):
         def normalize_key_value(key, value):
             cmds = dict()
-            field_type = getattr(model, key).field_type
-            if issubclass(field_type, Model):
+            field = getattr(model, key)
+            if issubclass(field.field_type, Model):
                 if isinstance(value, dict):
-                    sub_commands = self._generate_commands(field_type, **value)
+                    sub_commands = self._generate_commands(field.field_type, **value)
                     for k, v in sub_commands.iteritems():
                         new_key = generate_field(key, k)
                         cmds[new_key] = v
             else:
-                cmds[key] = Model._normalize_field_value(field_type, value)
+                cmds[key] = Model._normalize_field_value(field, value)
 
         commands = dict()
         for key, value in kwargs.iteritems():
@@ -414,8 +465,8 @@ class Update(object):
 
     def get_commands(self):
         return dict(
-            query=self.query,
-            update=self._generate_commands(self.model, **self.update),
+            spec=self.spec,
+            document=self._generate_commands(self.model, **self.update),
             multi=self.multi,
             upsert=self.upsert
         )
