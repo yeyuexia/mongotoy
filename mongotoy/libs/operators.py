@@ -22,6 +22,50 @@ class Comparison(Operator):
         self.value = value
 
 
+class Evaluation(Operator):
+    def __init__(self, value):
+        self.value = value
+
+
+class Array(Operator):
+    def __init__(self, value):
+        self.value = value
+
+
+class Update(Operator):
+    def __init__(self, value):
+        self.value = value
+
+
+class Geospatial(Operator):
+    def __init__(self, value):
+        self.value = value
+
+
+class Set(Update):
+
+    def compile(self):
+        return {"$set": self.value}
+
+
+class Unset(Update):
+
+    def compile(self):
+        return {"$unset": self.value}
+
+
+class Inc(Update):
+
+    def compile(self):
+        return {"$inc": self.value}
+
+
+class Mul(Update):
+
+    def compile(self):
+        return {"$mul": self.value}
+
+
 class Gt(Comparison):
 
     def compile(self):
@@ -134,17 +178,45 @@ class Type(Element):
         return {"$type": self.value}
 
 
-class Where(Operator):
+class Where(Evaluation):
     pass
 
 
-class Text(Operator):
+class Text(Evaluation):
     pass
 
 
-class Regex(Operator):
+class Regex(Evaluation):
     pass
 
 
-class Mod(Operator):
+class Mod(Evaluation):
+    pass
+
+
+class GeoWithin(Geospatial):
+    pass
+
+
+class GeoIntersects(Geospatial):
+    pass
+
+
+class Near(Geospatial):
+    pass
+
+
+class NearSphere(Geospatial):
+    pass
+
+
+class All(Array):
+    pass
+
+
+class ElemMatch(Array):
+    pass
+
+
+class Size(Array):
     pass
