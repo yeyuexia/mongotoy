@@ -7,7 +7,7 @@ Mongotoy is a simple Python Mongo toolkit and Object Relational Mapper that make
 * Declare collection.
 
 ```
-from mongotoy.libs import Model, SubModel, Field
+from mongotoy.libs.apis import Model, SubModel, Field
 class TestModel(Model):
 
     class ModelField(SubModel):

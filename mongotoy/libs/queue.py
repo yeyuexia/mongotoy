@@ -16,7 +16,7 @@ class Queue(object):
     def exists(self, obj):
         return (obj._id and obj._id in self.obj_ids) or (obj in self.objs)
 
-    def get_all(self, obj):
+    def get_all(self):
         return self.objs
 
     def clear(self):
