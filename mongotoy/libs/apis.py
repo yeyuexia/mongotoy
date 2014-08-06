@@ -11,12 +11,18 @@ from .base import generate_field, get_collection_name
 from .queue import flush_queue
 from .session import get_session
 from .consts import (
-    QUERY_FIND, QUERY_FIND_ONE, INSERT,
-    UPDATE, ID, ASCENDING, DESCENDING
+    QUERY_FIND, INSERT, UPDATE, ID,
+    ASCENDING, DESCENDING, DELETE
 )
-from operators import Element, Logical, Comparison
+from operators import Element, Logical, Comparison, Set
 
 _queue_lock = threading.Lock()
+
+
+def _pop_from_queue(model):
+    if flush_queue.exists(model):
+        with _queue_lock:
+            flush_queue.pop(model)
 
 
 def _push_flush_queue(model):
@@ -51,7 +57,7 @@ def flush():
             for c in command:
                 del c[ID]
             ids = session.execute(
-                collection_name, INSERT, command
+                collection_name, INSERT, dict(doc_or_docs=command)
             )
             for model, model_id in zip(contexts, ids):
                 model._id = model_id
@@ -61,7 +67,7 @@ def flush():
             session.execute(
                 model.__collectionname__, UPDATE,
                 dict(spec={ID: model._id},
-                     document=update_command)
+                     document=Set(update_command).compile())
             )
         flush_queue.clear()
 
@@ -96,12 +102,14 @@ class BaseModel(object):
                             __persistence__=self.__persistence__
                         )
                     else:
-                        if isinstance(value.default, types.FunctionType):
+                        if isinstance(value.default, types.FunctionType) or isinstance(value.default, types.BuiltinFunctionType):
                             v = value.default()
                         else:
                             v = copy.deepcopy(value.default)
                 setattr(self, field, v)
         self.__persistence__ = False
+        for arg in kwargs:
+            pass
 
     def __setattr__(self, key, value):
         if key in self.__class__.__dict__:
@@ -118,26 +126,37 @@ class BaseModel(object):
         else:
             super(BaseModel, self).__setattr__(key, value)
 
+    @classmethod
     def _normalize_field_value(self, field, value):
+        """
+        convert value to field type instance.
+        """
         if value is not None and not isinstance(value, field.field_type):
             if field.field_type is str and isinstance(value, unicode):
                 value = value.encode("utf8", "ignore")
             elif field.field_type is unicode and isinstance(value, str):
                 value = value.decode("utf8", "ignore")
-            elif field.field_type is datetime.datetime:
-                value = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S")
+            elif field.field_type is datetime.datetime and isinstance(value, basestring):
+                if value.find("T") != -1:
+                    value = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S")
+                else:
+                    value = datetime.datetime.strptime(value, "%Y-%m-%d")
             elif issubclass(field.field_type, SubModel):
-                value = field.field_type(
-                    __parent__=self, __fieldname__=field,
-                    __persistence__=self.__persistence__,
-                    **value
-                )
+                if isinstance(value, dict):
+                    value = field.field_type(
+                        __parent__=self, __fieldname__=field,
+                        __persistence__=self.__persistence__,
+                        **value
+                    )
+                elif isinstance(value, SubModel):
+                    value.__parent__ = self
+                    value.__fieldname__ = field
             else:
                 try:
                     value = field.field_type(value)
                 except:
                     raise ValueError("ValueError:%s value:%s" % (
-                        self.__class__.__name__, value
+                        self.__name__, value
                     ))
         return value
 
@@ -151,6 +170,9 @@ class BaseModel(object):
 
     @classmethod
     def _generate_query_context(cls, *args, **kwargs):
+        """
+        """
+        # TODO: need to make API more simple
         query = dict()
         for key, value in kwargs.iteritems():
             cls.assert_vaild_field(key)
@@ -183,14 +205,14 @@ class BaseModel(object):
         """
         Query the database.
         """
-        return Query(cls, query=cls._generate_query_context(*args, **kwargs))
+        return Query(cls, spec=cls._generate_query_context(*args, **kwargs))
 
     @classmethod
     def get_by(cls, *args, **kwargs):
         """
         get a model instance by the pass arguments
         """
-        return QueryOne(cls, query=cls._generate_query_context(
+        return QueryOne(cls, spec=cls._generate_query_context(
             *args, **kwargs
         ))()
 
@@ -199,8 +221,7 @@ class BaseModel(object):
         update model
         """
         for key, value in kwargs.iteritems():
-            if value:
-                setattr(self, key, value)
+            setattr(self, key, value)
 
     def to_dict(self):
         """
@@ -251,7 +272,7 @@ class Model(BaseModel):
         """
         if cls.__collectionname__ is None:
             cls.__collectionname__ = get_collection_name(cls.__name__)
-        return QueryOne(cls, query=cls._generate_query_context(
+        return QueryOne(cls, spec=cls._generate_query_context(
             _id=model_id
         ))()
 
@@ -266,6 +287,31 @@ class Model(BaseModel):
         if cls.__collectionname__ is None:
             cls.__collectionname__ = get_collection_name(cls.__name__)
         return super(Model, cls).query(*args, **kwargs)
+
+    @classmethod
+    def get_by_or_create(cls, **kwargs):
+        """
+        get or create a model instance by the pass arguments.
+        """
+        model = cls.get_by(**kwargs)
+        if model is None:
+            model = cls(**kwargs)
+            model.save()
+        return model
+
+    def save(self):
+        _pop_from_queue(self)
+        command = self.to_dict()
+        del command[ID]
+        _id = get_session().execute(
+            self.__collectionname__, INSERT, dict(doc_or_docs=command)
+        )
+        self._id = _id
+
+    def delete(self):
+        get_session().execute(
+            self.__collectionname__, DELETE, dict(spec_or_id={ID: self._id})
+        )
 
 
 class SubModel(BaseModel):
@@ -284,9 +330,9 @@ class BaseQuery(object):
         self.parent = None
         self.model = model
         self.commands = dict()
-        self.commands["spec"] = kwargs.get("query")
+        self.commands["spec"] = kwargs.get("spec")
         self.commands["sort"] = kwargs.get("sort")
-        self.commands["fields"] = kwargs.get("filter")
+        self.commands["fields"] = kwargs.get("fields")
         try:
             self.commands["skip"] = int(kwargs.get("skip", 0))
         except ValueError:
@@ -308,9 +354,17 @@ class BaseQuery(object):
                 values = commands[key]
                 if values:
                     if isinstance(values, (list, tuple)):
-                        commands[key] = [
-                            generate_field(self.__fieldname__, v) for v in values
-                        ]
+                        new_values = []
+                        for v in values:
+                            if isinstance(v, tuple):
+                                new_v = [generate_field(self.__fieldname__, v[0])]
+                                new_v.extend(list(v[1:]))
+                                new_values.append(new_v)
+                            else:
+                                new_values.append(
+                                    generate_field(self.__fieldname__, v)
+                                )
+                        commands[key] = new_values
                     elif isinstance(values, dict):
                         new_values = dict()
                         for k, v in values.iteritems():
@@ -363,8 +417,12 @@ class BaseQuery(object):
         except ValueError:
             raise ValueError("skip must be int")
 
-    def filter(self, *args):
-        pass
+    def filters(self, fields):
+        """
+        """
+        for field in fields:
+            self.model.assert_vaild_field(field)
+        self.commands["fields"] = fields
 
 
 class Query(BaseQuery):
@@ -401,16 +459,20 @@ class Query(BaseQuery):
         self.commands["limit"] = count
         return self
 
-    def update(self, if_not_create=False, **kwargs):
+    def update(self, if_not_create=False, multi=True, **kwargs):
         """
         update model
         """
         update = Update(self.model,
                         spec=self.get_commands()["spec"],
                         document=kwargs,
-                        multi=True,
+                        multi=multi,
                         upsert=if_not_create)
         return get_session().execute(*update.compile_context())
+
+    def delete(self):
+        collection = self.model.__collectionname__
+        get_session().execute(collection, DELETE, dict(spec_or_id=self.get_commands()["spec"]))
 
 
 class QueryOne(BaseQuery):
@@ -455,7 +517,8 @@ class Update(object):
                         new_key = generate_field(key, k)
                         cmds[new_key] = v
             else:
-                cmds[key] = Model._normalize_field_value(field, value)
+                cmds[key] = model._normalize_field_value(field, value)
+            return cmds
 
         commands = dict()
         for key, value in kwargs.iteritems():
@@ -466,7 +529,7 @@ class Update(object):
     def get_commands(self):
         return dict(
             spec=self.spec,
-            document=self._generate_commands(self.model, **self.update),
+            document=Set(self._generate_commands(self.model, **self.document)).compile(),
             multi=self.multi,
             upsert=self.upsert
         )

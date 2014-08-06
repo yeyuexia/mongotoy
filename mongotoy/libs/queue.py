@@ -13,6 +13,12 @@ class Queue(object):
                 self.obj_ids.add(obj._id)
             self.objs.add(obj)
 
+    def pop(self, obj):
+        if obj._id and obj._id in self.obj_ids:
+            self.obj_ids.remove(obj)
+        if self.objs:
+            self.objs.remove(obj)
+
     def exists(self, obj):
         return (obj._id and obj._id in self.obj_ids) or (obj in self.objs)
 
