@@ -89,6 +89,8 @@ class Field(object):
 
 
 class BaseModel(object):
+    __persistence__ = False
+
     def __init__(self, **kwargs):
         self.__persistence__ = kwargs.get("__persistence__", False)
         for field, value in self.__class__.__dict__.iteritems():
@@ -126,7 +128,6 @@ class BaseModel(object):
         else:
             super(BaseModel, self).__setattr__(key, value)
 
-    @classmethod
     def _normalize_field_value(self, field, value):
         """
         convert value to field type instance.
@@ -156,15 +157,15 @@ class BaseModel(object):
                     value = field.field_type(value)
                 except:
                     raise ValueError("ValueError:%s value:%s" % (
-                        self.__name__, value
+                        self.__class__.__name__, value
                     ))
         return value
 
     @classmethod
     def assert_vaild_field(cls, key):
-        if key not in cls.__dict__:
+        if not (hasattr(cls, key) and isinstance(getattr(cls, key), Field)):
             raise KeyError("Model %s does not has field named %s" % (
-                cls.__class__.__name__, key
+                cls.__name__, key
             ))
         return True
 
@@ -176,7 +177,7 @@ class BaseModel(object):
         query = dict()
         for key, value in kwargs.iteritems():
             cls.assert_vaild_field(key)
-            field_type = cls.__dict__[key].field_type
+            field_type = getattr(cls, key).field_type
             if field_type is not list and not isinstance(value, field_type):
                 if isinstance(value, Comparison) or isinstance(value, Element):
                     value = value.compile()
@@ -190,7 +191,7 @@ class BaseModel(object):
                         value = field_type(value)
                     except:
                         raise ValueError("ValueError: %s.%s value:%s" % (
-                            cls.__class__.__name__, key, value
+                            cls.__name__, key, value
                         ))
             query[key] = value
         for arg in args:
@@ -233,8 +234,6 @@ class BaseModel(object):
                 value = getattr(self, field)
                 if issubclass(v.field_type, SubModel):
                     res[field] = value.to_dict()
-                elif field == "_id":
-                    res[field] = str(value)
                 else:
                     res[field] = value
         return res
@@ -258,12 +257,17 @@ class Model(BaseModel):
 
     __collectionname__ = None
     __engine__ = None
+    _id = Field(ObjectId, None)
 
     def __new__(cls, **kwargs):
-        setattr(cls, "_id", Field(ObjectId, None))
         if cls.__collectionname__ is None:
             cls.__collectionname__ = get_collection_name(cls.__name__)
-        return super(Model, cls).__new__(cls, **kwargs)
+        return super(Model, cls).__new__(cls)
+
+    def __init__(self, *args, **kwargs):
+        value = kwargs.pop(ID, self._id.default)
+        self._id = self._normalize_field_value(self._id, value)
+        super(Model, self).__init__(*args, **kwargs)
 
     @classmethod
     def get(cls, model_id):
@@ -312,6 +316,11 @@ class Model(BaseModel):
         get_session().execute(
             self.__collectionname__, DELETE, dict(spec_or_id={ID: self._id})
         )
+
+    def to_dict(self):
+        res = super(Model, self).to_dict()
+        res[ID] = str(self._id) if self._id else None
+        return res
 
 
 class SubModel(BaseModel):
