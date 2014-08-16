@@ -102,11 +102,17 @@ Notes: the method delete invoke immediately, you don't need invoke flush() after
 You can use mongo operators in mongotoy
 
 ```
-from mongotoy.libs.operators import Or, And
+from mongotoy.libs.operators import Or, And, Type
 
-cursor = TestModel.query(Or(field1=2, And(field1=1, field2=2)))
+cursor = TestModel.query(Or(And(field1=1, field2=2), Type("field2", float), field1=5))
 ```
-Now mongotoy support all logical, comparison and element operators.
+ and in update
+```
+from mongotoy.libs.operators import Unset, Set
+
+TestModel.query(field1=1).update(Set(field2=1, field1=5), Unset(field4=""))
+```
+Now mongotoy support all logical, comparison, element and update operators.
 
 ## Advance Usage
 * Custom collection name
