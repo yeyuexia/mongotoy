@@ -2,6 +2,7 @@
 
 import copy
 import types
+import numbers
 import threading
 import datetime
 
@@ -14,7 +15,11 @@ from .consts import (
     QUERY_FIND, INSERT, UPDATE, ID,
     ASCENDING, DESCENDING, DELETE
 )
-from operators import Element, Logical, Comparison, Set
+from operators import (
+    Set, QueryOperator,
+    query_operator_compiler,
+    update_operator_compiler
+)
 
 _queue_lock = threading.Lock()
 
@@ -89,6 +94,8 @@ class Field(object):
 
 
 class BaseModel(object):
+    __persistence__ = False
+
     def __init__(self, **kwargs):
         self.__persistence__ = kwargs.get("__persistence__", False)
         for field, value in self.__class__.__dict__.iteritems():
@@ -115,7 +122,7 @@ class BaseModel(object):
         if key in self.__class__.__dict__:
             field = self.__class__.__dict__[key]
             if isinstance(field, Field):
-                value = self._normalize_field_value(field, value)
+                value = self.normalize_field_value(field, value)
                 super(BaseModel, self).__setattr__(key, value)
                 if not self.__persistence__:
                     _push_flush_queue(self)
@@ -126,8 +133,7 @@ class BaseModel(object):
         else:
             super(BaseModel, self).__setattr__(key, value)
 
-    @classmethod
-    def _normalize_field_value(self, field, value):
+    def normalize_field_value(self, field, value):
         """
         convert value to field type instance.
         """
@@ -141,6 +147,10 @@ class BaseModel(object):
                     value = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S")
                 else:
                     value = datetime.datetime.strptime(value, "%Y-%m-%d")
+            elif field.field_type is datetime.datetime and isinstance(value, numbers.Number):
+                value = datetime.datetime.fromtimestamp(value)
+            elif field.field_type is datetime.date and isinstance(value, basestring):
+                value = datetime.datetime.strptime(value, "%Y-%m-%d")
             elif issubclass(field.field_type, SubModel):
                 if isinstance(value, dict):
                     value = field.field_type(
@@ -156,15 +166,15 @@ class BaseModel(object):
                     value = field.field_type(value)
                 except:
                     raise ValueError("ValueError:%s value:%s" % (
-                        self.__name__, value
+                        self.__class__.__name__, value
                     ))
         return value
 
     @classmethod
     def assert_vaild_field(cls, key):
-        if key not in cls.__dict__:
+        if not (hasattr(cls, key) and isinstance(getattr(cls, key), Field)):
             raise KeyError("Model %s does not has field named %s" % (
-                cls.__class__.__name__, key
+                cls.__name__, key
             ))
         return True
 
@@ -173,14 +183,12 @@ class BaseModel(object):
         """
         """
         # TODO: need to make API more simple
-        query = dict()
+        spec = dict()
         for key, value in kwargs.iteritems():
             cls.assert_vaild_field(key)
-            field_type = cls.__dict__[key].field_type
+            field_type = getattr(cls, key).field_type
             if field_type is not list and not isinstance(value, field_type):
-                if isinstance(value, Comparison) or isinstance(value, Element):
-                    value = value.compile()
-                elif (
+                if (
                     issubclass(field_type, SubModel) and isinstance(value, Query)
                 ):
                     value.__parent__ = cls.__class__
@@ -190,15 +198,15 @@ class BaseModel(object):
                         value = field_type(value)
                     except:
                         raise ValueError("ValueError: %s.%s value:%s" % (
-                            cls.__class__.__name__, key, value
+                            cls.__name__, key, value
                         ))
-            query[key] = value
+            spec[key] = value
         for arg in args:
-            if isinstance(arg, Logical):
-                arg.value = [cls._generate_query_context(v) for v in arg.value]
+            if isinstance(arg, QueryOperator):
+                spec.update(query_operator_compiler(cls, arg))
             else:
                 raise ValueError("not registered attribute: %s" % arg)
-        return query
+        return spec
 
     @classmethod
     def query(cls, *args, **kwargs):
@@ -233,8 +241,6 @@ class BaseModel(object):
                 value = getattr(self, field)
                 if issubclass(v.field_type, SubModel):
                     res[field] = value.to_dict()
-                elif field == "_id":
-                    res[field] = str(value)
                 else:
                     res[field] = value
         return res
@@ -258,12 +264,17 @@ class Model(BaseModel):
 
     __collectionname__ = None
     __engine__ = None
+    _id = Field(ObjectId, None)
 
     def __new__(cls, **kwargs):
-        setattr(cls, "_id", Field(ObjectId, None))
         if cls.__collectionname__ is None:
             cls.__collectionname__ = get_collection_name(cls.__name__)
-        return super(Model, cls).__new__(cls, **kwargs)
+        return super(Model, cls).__new__(cls)
+
+    def __init__(self, *args, **kwargs):
+        value = kwargs.pop(ID, self._id.default)
+        self._id = self.normalize_field_value(self._id, value)
+        super(Model, self).__init__(*args, **kwargs)
 
     @classmethod
     def get(cls, model_id):
@@ -313,14 +324,19 @@ class Model(BaseModel):
             self.__collectionname__, DELETE, dict(spec_or_id={ID: self._id})
         )
 
+    def to_dict(self):
+        res = super(Model, self).to_dict()
+        res[ID] = str(self._id) if self._id else None
+        return res
+
 
 class SubModel(BaseModel):
     __parent__ = None
     __fieldname__ = None
 
     def __init__(self, **kwargs):
-        self.__parent__ = kwargs.pop("__parent__")
-        self.__fieldname__ = kwargs.pop("__fieldname__")
+        self.__parent__ = kwargs.pop("__parent__", None)
+        self.__fieldname__ = kwargs.pop("__fieldname__", None)
         super(SubModel, self).__init__(**kwargs)
 
 
@@ -428,22 +444,33 @@ class BaseQuery(object):
 class Query(BaseQuery):
     def __init__(self, model, **kwargs):
         super(Query, self).__init__(model, **kwargs)
+        self.cursor = None
         self.commands["limit"] = kwargs.get("limit", 0)
 
     def __getitem__(self, item):
         pass
 
     def __iter__(self):
-        context = self._compile_context()
-        return self.execute_context(context)
+        if self.cursor is None:
+            context = self._compile_context()
+            self.execute_context(context)
+        return self
+
+    def next(self):
+        if self.cursor is None:
+            context = self._compile_context()
+            self.execute_context(context)
+        record = next(self.cursor, None)
+        if record is None:
+            raise StopIteration
+        return self.model.__class__(__persistence__=True, **record)
 
     def compile_context(self, operation=QUERY_FIND):
         collection = self.model.__collectionname__
         return (collection, operation, self.get_commands())
 
     def execute_context(self, context):
-        for record in get_session().execute(*context):
-            yield self.model.__class__(__persistence__=True, **record)
+        self.cursor = get_session().execute(*context)
 
     def all(self):
         """
@@ -451,20 +478,22 @@ class Query(BaseQuery):
         """
         return list(self)
 
-    def limit(self, count):
+    def limit(self, capicity):
         """
         query().limit(count)
         """
-        assert isinstance(count, int), "limit access int argument"
-        self.commands["limit"] = count
+        assert isinstance(capicity, int), "limit access int argument"
+        self.commands["limit"] = capicity
         return self
 
-    def update(self, if_not_create=False, multi=True, **kwargs):
+    def update(self, if_not_create=False, multi=True, *args, **kwargs):
         """
         update model
         """
+        if kwargs and not any(lambda x: isinstance(x, Set)):
+            args.append(Set(kwargs))
         update = Update(self.model,
-                        spec=self.get_commands()["spec"],
+                        spec=args,
                         document=kwargs,
                         multi=multi,
                         upsert=if_not_create)
@@ -472,7 +501,18 @@ class Query(BaseQuery):
 
     def delete(self):
         collection = self.model.__collectionname__
-        get_session().execute(collection, DELETE, dict(spec_or_id=self.get_commands()["spec"]))
+        get_session().execute(
+            collection, DELETE, dict(spec_or_id=self.get_commands()["spec"])
+        )
+
+    def count(self):
+        """
+        get the records count in this query operator
+        """
+        if self.cursor is None:
+            context = self._compile_context()
+            self.execute_context(context)
+        return self.cursor.count()
 
 
 class QueryOne(BaseQuery):
@@ -506,30 +546,17 @@ class Update(object):
         self.multi = multi
         self.upsert = upsert
 
-    def _generate_commands(self, model, **kwargs):
-        def normalize_key_value(key, value):
-            cmds = dict()
-            field = getattr(model, key)
-            if issubclass(field.field_type, Model):
-                if isinstance(value, dict):
-                    sub_commands = self._generate_commands(field.field_type, **value)
-                    for k, v in sub_commands.iteritems():
-                        new_key = generate_field(key, k)
-                        cmds[new_key] = v
-            else:
-                cmds[key] = model._normalize_field_value(field, value)
-            return cmds
+    def _generate_commands(self):
 
         commands = dict()
-        for key, value in kwargs.iteritems():
-            model.assert_vaild_field(key)
-            commands.update(normalize_key_value(key, value))
+        for expression in self.document:
+            commands.update(update_operator_compiler(expression))
         return commands
 
     def get_commands(self):
         return dict(
             spec=self.spec,
-            document=Set(self._generate_commands(self.model, **self.document)).compile(),
+            document=self._generate_commands(),
             multi=self.multi,
             upsert=self.upsert
         )
