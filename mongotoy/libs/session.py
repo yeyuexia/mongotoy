@@ -14,6 +14,7 @@ class Session(object):
     def __init__(self, **kwargs):
         self._lookup_table = {}
         self.mapper = dict()
+        self.session = None
         self.load_table_mapper(kwargs.get("collection_mapper", dict()))
 
     def load_table_mapper(self, mapper):
@@ -21,6 +22,9 @@ class Session(object):
             self.mapper[db] = [get_collection_name(model) for model in models]
 
     def _search_propable_db(self, collection_name):
+        """
+        get propable database by collection_name
+        """
         if collection_name in self._lookup_table:
             return self._lookup_table[collection_name]
         for db, collections in self.mapper.iteritems():
@@ -35,6 +39,15 @@ class Session(object):
         db = self._search_propable_db(collection)
         func = getattr(self.session[db][collection], func)
         return func(**fields)
+
+    def close(self):
+        """
+        try to close session
+        """
+        try:
+            self.session.close()
+        except Exception:
+            pass
 
 
 class ReplicaSetSession(Session):

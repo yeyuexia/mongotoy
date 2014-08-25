@@ -15,7 +15,7 @@ from .consts import (
     QUERY_FIND, INSERT, UPDATE, ID,
     ASCENDING, DESCENDING, DELETE
 )
-from operators import (
+from .operators import (
     Set, QueryOperator,
     query_operator_compiler,
     update_operator_compiler
@@ -58,11 +58,11 @@ def flush():
                     insert_models[collection_name] = []
                 insert_models[collection_name].append(model)
         for collection_name, contexts in insert_models.iteritems():
-            command = [m.to_dict() for m in contexts]
-            for c in command:
-                del c[ID]
+            commands = [m.to_dict() for m in contexts]
+            for command in commands:
+                del command[ID]
             ids = session.execute(
-                collection_name, INSERT, dict(doc_or_docs=command)
+                collection_name, INSERT, dict(doc_or_docs=commands)
             )
             for model, model_id in zip(contexts, ids):
                 model._id = model_id
@@ -164,7 +164,7 @@ class BaseModel(object):
             else:
                 try:
                     value = field.field_type(value)
-                except:
+                except Exception:
                     raise ValueError("ValueError:%s value:%s" % (
                         self.__class__.__name__, value
                     ))
@@ -181,6 +181,7 @@ class BaseModel(object):
     @classmethod
     def _generate_query_context(cls, *args, **kwargs):
         """
+        build query command
         """
         # TODO: need to make API more simple
         spec = dict()
@@ -188,15 +189,13 @@ class BaseModel(object):
             cls.assert_vaild_field(key)
             field_type = getattr(cls, key).field_type
             if field_type is not list and not isinstance(value, field_type):
-                if (
-                    issubclass(field_type, SubModel) and isinstance(value, Query)
-                ):
-                    value.__parent__ = cls.__class__
+                if issubclass(field_type, SubModel) and isinstance(value, Query):
+                    value.__parent__ = cls
                     value.__fieldname__ = key
                 else:
                     try:
                         value = field_type(value)
-                    except:
+                    except Exception:
                         raise ValueError("ValueError: %s.%s value:%s" % (
                             cls.__name__, key, value
                         ))
@@ -395,7 +394,7 @@ class BaseQuery(object):
             commands["timeout"] = False
         return commands
 
-    def compile_context(self):
+    def _compile_context(self):
         raise NotImplementedError()
 
     def execute_context(self, context):
@@ -460,12 +459,10 @@ class Query(BaseQuery):
         if self.cursor is None:
             context = self._compile_context()
             self.execute_context(context)
-        record = next(self.cursor, None)
-        if record is None:
-            raise StopIteration
+        record = next(self.cursor)
         return self.model.__class__(__persistence__=True, **record)
 
-    def compile_context(self, operation=QUERY_FIND):
+    def _compile_context(self, operation=QUERY_FIND):
         collection = self.model.__collectionname__
         return (collection, operation, self.get_commands())
 
@@ -490,11 +487,12 @@ class Query(BaseQuery):
         """
         update model
         """
-        if kwargs and not any(lambda x: isinstance(x, Set)):
+        args = list(args)
+        if kwargs and not any(isinstance(x, Set) for x in args):
             args.append(Set(kwargs))
         update = Update(self.model,
-                        spec=args,
-                        document=kwargs,
+                        spec=self.get_commands()["spec"],
+                        document=args,
                         multi=multi,
                         upsert=if_not_create)
         return get_session().execute(*update.compile_context())
@@ -517,7 +515,7 @@ class Query(BaseQuery):
 
 class QueryOne(BaseQuery):
 
-    def compile_context(self):
+    def _compile_context(self):
         collection = self.model.__collectionname__
         return (collection, QUERY_FIND, self.get_commands())
 
@@ -526,7 +524,7 @@ class QueryOne(BaseQuery):
             return self.model(__persistence__=True, **result)
 
     def __call__(self):
-        return self.execute_context(self.compile_context())
+        return self.execute_context(self._compile_context())
 
 
 class Update(object):
@@ -550,7 +548,7 @@ class Update(object):
 
         commands = dict()
         for expression in self.document:
-            commands.update(update_operator_compiler(expression))
+            commands.update(update_operator_compiler(self.model, expression))
         return commands
 
     def get_commands(self):
