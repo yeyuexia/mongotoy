@@ -322,13 +322,17 @@ def update_operator_compiler(model, instance):
             )
         ) or (
             isinstance(instance, Rename) and not isinstance(value, basestring)
-        ) or (
-            isinstance(instance, Set) and not isinstance(value, field_type)
         ):
             raise SyntaxError(
                 "%s can not use operator %s" % (
-                    getattr(model, key).field_type.__name__,
+                    field_type.__name__,
                     instance.__class__.__name__
+                )
+            )
+        if isinstance(instance, Set) and not isinstance(value, field_type):
+            raise SyntaxError(
+                "%s.%s, wrong field type. %s expected, %s gived" % (
+                    model.__name__, key, field_type.__name__, type(value)
                 )
             )
     return instance.compile()
