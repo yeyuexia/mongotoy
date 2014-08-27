@@ -77,26 +77,41 @@ def flush():
         flush_queue.clear()
 
 
+def _normalize_field_value(field_type, value):
+    if field_type is str and isinstance(value, unicode):
+        value = value.encode("utf8", "ignore")
+    elif field_type is unicode and isinstance(value, str):
+        value = value.decode("utf8", "ignore")
+    elif field_type is datetime.datetime and isinstance(value, basestring):
+        if value.find("T") != -1:
+            value = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S")
+        else:
+            value = datetime.datetime.strptime(value, "%Y-%m-%d")
+    elif field_type is datetime.datetime and isinstance(value, numbers.Number):
+        value = datetime.datetime.fromtimestamp(value)
+    elif field_type is datetime.date and isinstance(value, basestring):
+        value = datetime.datetime.strptime(value, "%Y-%m-%d")
+    else:
+        value = field_type(value)
+    return value
+
+
 class Field(object):
-    def __init__(self, field_type, default=None, value=None):
+    def __init__(self, field_type, default=None):
         assert isinstance(field_type, type), "unknown type for field"
         self.field_type = field_type
         self.default = default
-        self.value = value
 
     def __desc__(self):
         return "Field %s, type: %s, default: %s" % (
             self.__name__, self.field_type, self.default
         )
 
-    def __mapper__(self):
-        return self.value
-
 
 class BaseModel(object):
     __persistence__ = False
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         self.__persistence__ = kwargs.get("__persistence__", False)
         for field, value in self.__class__.__dict__.iteritems():
             if isinstance(value, Field):
@@ -138,20 +153,7 @@ class BaseModel(object):
         convert value to field type instance.
         """
         if value is not None and not isinstance(value, field.field_type):
-            if field.field_type is str and isinstance(value, unicode):
-                value = value.encode("utf8", "ignore")
-            elif field.field_type is unicode and isinstance(value, str):
-                value = value.decode("utf8", "ignore")
-            elif field.field_type is datetime.datetime and isinstance(value, basestring):
-                if value.find("T") != -1:
-                    value = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%S")
-                else:
-                    value = datetime.datetime.strptime(value, "%Y-%m-%d")
-            elif field.field_type is datetime.datetime and isinstance(value, numbers.Number):
-                value = datetime.datetime.fromtimestamp(value)
-            elif field.field_type is datetime.date and isinstance(value, basestring):
-                value = datetime.datetime.strptime(value, "%Y-%m-%d")
-            elif issubclass(field.field_type, SubModel):
+            if issubclass(field.field_type, SubModel):
                 if isinstance(value, dict):
                     value = field.field_type(
                         __parent__=self, __fieldname__=field,
@@ -163,7 +165,7 @@ class BaseModel(object):
                     value.__fieldname__ = field
             else:
                 try:
-                    value = field.field_type(value)
+                    value = _normalize_field_value(field.field_type, value)
                 except Exception:
                     raise ValueError("ValueError:%s value:%s" % (
                         self.__class__.__name__, value
@@ -185,26 +187,34 @@ class BaseModel(object):
         """
         # TODO: need to make API more simple
         spec = dict()
+        for arg in args:
+            if isinstance(arg, QueryOperator):
+                for key, value in query_operator_compiler(cls, arg).iteritems():
+                    if key in spec:
+                        spec[key].update(value)
+                    else:
+                        spec.update([(key, value)])
+            else:
+                raise ValueError("not registered attribute: %s" % arg)
+
         for key, value in kwargs.iteritems():
             cls.assert_vaild_field(key)
             field_type = getattr(cls, key).field_type
             if field_type is not list and not isinstance(value, field_type):
-                if issubclass(field_type, SubModel) and isinstance(value, Query):
-                    value.__parent__ = cls
-                    value.__fieldname__ = key
+                if issubclass(field_type, SubModel):
+                    if isinstance(value, Query):
+                        value.__parent__ = cls
+                        value.__fieldname__ = key
+                    elif isinstance(value, dict):
+                        value = Query(cls, cls._generate_query_context(**value))
                 else:
                     try:
-                        value = field_type(value)
+                        value = _normalize_field_value(field_type, value)
                     except Exception:
                         raise ValueError("ValueError: %s.%s value:%s" % (
                             cls.__name__, key, value
                         ))
             spec[key] = value
-        for arg in args:
-            if isinstance(arg, QueryOperator):
-                spec.update(query_operator_compiler(cls, arg))
-            else:
-                raise ValueError("not registered attribute: %s" % arg)
         return spec
 
     @classmethod
@@ -333,10 +343,10 @@ class SubModel(BaseModel):
     __parent__ = None
     __fieldname__ = None
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         self.__parent__ = kwargs.pop("__parent__", None)
         self.__fieldname__ = kwargs.pop("__fieldname__", None)
-        super(SubModel, self).__init__(**kwargs)
+        super(SubModel, self).__init__(*args, **kwargs)
 
 
 class BaseQuery(object):
@@ -460,7 +470,7 @@ class Query(BaseQuery):
             context = self._compile_context()
             self.execute_context(context)
         record = next(self.cursor)
-        return self.model.__class__(__persistence__=True, **record)
+        return self.model(__persistence__=True, **record)
 
     def _compile_context(self, operation=QUERY_FIND):
         collection = self.model.__collectionname__
