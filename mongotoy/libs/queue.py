@@ -1,5 +1,9 @@
 # coding: utf8
 
+import threading
+
+_queue_lock = threading.Lock()
+
 
 class Queue(object):
     """use for store the models need to update"""
@@ -31,3 +35,30 @@ class Queue(object):
 
 
 flush_queue = Queue()
+
+
+def pop_from_queue(model):
+    model = _get_parent(model)
+    if model is not None:
+        if flush_queue.exists(model):
+            with _queue_lock:
+                if flush_queue.exists(model):
+                    flush_queue.pop(model)
+
+
+def push_flush_queue(model):
+    model = _get_parent(model)
+    if model is not None:
+        if not flush_queue.exists(model):
+            with _queue_lock:
+                flush_queue.push(model)
+
+
+def _get_parent(model):
+    while hasattr(model, "__parent__"):
+        model = model.__parent__
+    return model
+
+
+def get_lock():
+    return _queue_lock

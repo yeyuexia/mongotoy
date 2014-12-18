@@ -1,16 +1,23 @@
 # coding: utf8
 
-import copy
+from .fields import Field
+from .util import get_collection_name
 
 
-def generate_field(parent, field):
-    return "%s.%s" % (parent, field)
+class BaseMetaClass(type):
+    def __new__(cls, name, bases, attrs):
+        for attr_key, attr_value in attrs.iteritems():
+            if isinstance(attr_value, Field):
+                attr_value.__field_name__ = attr_key
+        new_class = super(BaseMetaClass, cls).__new__(cls, name, bases, attrs)
+        for attr_key, attr_value in attrs.iteritems():
+            if isinstance(attr_value, Field):
+                attr_value.__parent__ = new_class
+        return new_class
 
 
-def get_collection_name(model_name):
-    collection_name = copy.copy(model_name)
-    collection_name = collection_name[0].lower() + collection_name[1:]
-    for c in model_name:
-        if c.isupper():
-            collection_name = collection_name.replace(c, "_" + c.lower())
-    return collection_name
+class MetaClass(BaseMetaClass):
+    def __new__(cls, name, bases, attrs):
+        if "__collectionname__" not in attrs:
+            attrs["__collectionname__"] = get_collection_name(name)
+        return super(MetaClass, cls).__new__(cls, name, bases, attrs)

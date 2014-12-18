@@ -5,23 +5,30 @@ import datetime
 
 
 class Operator(object):
+    def __init__(self, value):
+        self._value_check(value)
+        self.value = value
 
     def compile(self):
         raise NotImplementedError("")
 
+    def _value_check(self, value):
+        pass
+
 
 class QueryOperator(Operator):
-    def __init__(self, key, value):
-        self.key = key
-        self.value = value
+    def __init__(self, field=None, value=None):
+        if field is not None:
+            self.field = field
+        super(QueryOperator, self).__init__(value)
 
 
 class UpdateOperator(Operator):
     def __init__(self, value):
-        self.value = value
+        super(UpdateOperator, self).__init__(value)
 
 
-class Logical(QueryOperator):
+class LogicalOperator(Operator):
     pass
 
 
@@ -102,89 +109,104 @@ class CurrentDate(UpdateOperator):
 class Gt(Comparison):
 
     def compile(self):
-        return {self.key: {"$gt": self.value}}
+        return {self.field: {"$gt": self.value}}
 
 
 class Gte(Comparison):
 
     def compile(self):
-        return {self.key: {"$gte": self.value}}
+        return {self.field: {"$gte": self.value}}
 
 
 class Lt(Comparison):
 
     def compile(self):
-        return {self.key: {"$lt": self.value}}
+        return {self.field: {"$lt": self.value}}
 
 
 class Lte(Comparison):
 
     def compile(self):
-        return {self.key: {"$lte": self.value}}
+        return {self.field: {"$lte": self.value}}
 
 
 class Ne(Comparison):
 
     def compile(self):
-        return {self.key: {"$ne": self.value}}
+        return {self.field: {"$ne": self.value}}
 
 
 class In(Comparison):
 
     def compile(self):
-        return {self.key: {"$in": self.value}}
+        return {self.field: {"$in": self.value}}
 
 
 class Nin(Comparison):
 
     def compile(self):
-        return {self.key: {"$nin": self.value}}
+        return {self.field: {"$nin": self.value}}
 
 
-class Or(Logical):
+class Or(LogicalOperator):
 
     def __init__(self, *args, **kwargs):
-        super(Or, self).__init__(None, (args, kwargs))
+        values = []
+        for arg in args:
+            values.append(arg.compile())
+        values.extend(kwargs)
+        super(Or, self).__init__(values)
 
     def compile(self):
         return {"$or": self.value}
 
 
-class And(Logical):
+class And(LogicalOperator):
 
     def __init__(self, *args, **kwargs):
-        super(And, self).__init__(None, (args, kwargs))
+        values = []
+        for arg in args:
+            values.append(arg.compile())
+        values.update(kwargs)
+        super(And, self).__init__(values)
 
     def compile(self):
         return {"$and": self.value}
 
 
-class Not(Logical):
+class Not(LogicalOperator):
 
-    def __init__(self, key, value):
+    def __init__(self, field, value):
+        self.field = field
+        super(Not, self).__init__(value)
+
+    def _value_check(self, value):
         assert isinstance(value, Operator), "value must be expression"
-        super(Nor, self).__init__(key, value)
 
     def compile(self):
-        return {self.key: {"$not": self.value}}
+        return {self.field: {"$not": self.value}}
 
 
-class Nor(Logical):
+class Nor(LogicalOperator):
 
     def __init__(self, *args, **kwargs):
-        super(Nor, self).__init__(None, (args, kwargs))
+        values = []
+        for arg in args:
+            values.append(arg.compile())
+        values.update(kwargs)
+        super(Nor, self).__init__(values)
 
     def compile(self):
         return {"$nor": self.value}
 
 
 class Exists(Element):
-    def __init__(self, value):
+
+    def _value_check(self, value):
         assert isinstance(value, bool), "invalid value"
-        super(Exists, self).__init__(value)
 
     def compile(self):
-        return {self.key: {"$exists": self.value}}
+        return {self.field: {"$exists": self.value}}
 
 
 class Type(Element):
@@ -208,7 +230,7 @@ class Type(Element):
     Min_key = 255
     Max_key = 127
 
-    def __init__(self, key, value):
+    def _value_check(self, value):
         assert value in (
             self.Double, self.String, self.Object,
             self.Array, self.Binary_data, self.Undefined,
@@ -218,10 +240,9 @@ class Type(Element):
             self.Integer_32bit, self.Timestamp,
             self.integer_64bit, self.Min_key, self.Max_key
         ), "invalid value"
-        super(Type, self).__init__(key, value)
 
     def compile(self):
-        return {self.key: {"$type": self.value}}
+        return {self.field: {"$type": self.value}}
 
 
 class Where(Evaluation):
@@ -288,26 +309,8 @@ def _get_field_type(model, key):
     return real_field.field_type
 
 
-def query_operator_compiler(model, instance):
-    if isinstance(instance, Logical):
-        if isinstance(instance.value, Operator):
-            _assert_vaild_field(model, instance.key)
-            instance.value = instance.value.compile()
-        else:
-            v_args, v_kwargs = instance.value
-            values = []
-            for value in v_args:
-                values.append(query_operator_compiler(model, value))
-            for key, value in v_kwargs.iteritems():
-                values.append({key: value})
-            instance.value = values
-    else:
-        _assert_vaild_field(model, instance.key)
-    return instance.compile()
-
-
 def update_operator_compiler(model, instance):
-    for key, value in instance.value.iteritems():
+    for key, value in instance.command.iteritems():
         _assert_vaild_field(model, key)
         field_type = _get_field_type(model, key)
         if (
@@ -330,9 +333,12 @@ def update_operator_compiler(model, instance):
                 )
             )
         if isinstance(instance, Set) and not isinstance(value, field_type):
-            raise SyntaxError(
-                "%s.%s, wrong field type. %s expected, %s gived" % (
-                    model.__name__, key, field_type.__name__, type(value)
+            try:
+                instance[key] = field_type.normalize_vlaue(value)
+            except:
+                raise SyntaxError(
+                    "%s.%s, wrong field type. %s expected, %s gived" % (
+                        model.__name__, key, field_type.__name__, type(value)
+                    )
                 )
-            )
     return instance.compile()

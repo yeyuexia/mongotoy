@@ -4,7 +4,11 @@ import threading
 
 import pymongo
 
-from .base import get_collection_name
+from .util import get_collection_name
+from .queue import flush_queue, get_lock
+from .consts import ID, UPDATE, INSERT
+from .operators import Set
+
 
 _lock = threading.Lock()
 session = None
@@ -104,3 +108,39 @@ def loads_db_mapper(mapper):
 
 def get_session():
     return session
+
+
+def flush():
+    """
+    push all change to mongo db. It is a block operator so would be takes some time.
+    """
+    with get_lock():
+        session = get_session()
+        insert_models = {}
+        update_models = []
+        for model in flush_queue.get_all():
+            if model._id:
+                update_models.append(model)
+            else:
+                collection_name = model.__collectionname__
+                if collection_name not in insert_models:
+                    insert_models[collection_name] = []
+                insert_models[collection_name].append(model)
+        for collection_name, contexts in insert_models.iteritems():
+            commands = [m.to_dict() for m in contexts]
+            for command in commands:
+                del command[ID]
+            ids = session.execute(
+                collection_name, INSERT, dict(doc_or_docs=commands)
+            )
+            for model, model_id in zip(contexts, ids):
+                model._id = model_id
+        for model in update_models:
+            update_command = model.to_dict()
+            del update_command[ID]
+            session.execute(
+                model.__collectionname__, UPDATE,
+                dict(spec={ID: model._id},
+                     document=Set(update_command).compile())
+            )
+        flush_queue.clear()
