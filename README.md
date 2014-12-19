@@ -7,16 +7,16 @@ Mongotoy is a simple Python Mongo toolkit and Object Relational Mapper that make
 * Declare collection named `test_model`.
 
 ```
-import datetime
 
-from mongotoy.libs.apis import Model, SubModel, Field
+from mongotoy.libs.models import Model, SubModel
+from mongotoy.libs.fields import IntField, FloatField, ModelField, DateTimeField, SetField
 
 
 class TestModel(Model):
 
 	class ModelField(SubModel):
-		field1 = Field(float, 0)
-		field2 = Field(set, set())
+		field1 = FloatField(0)
+		field2 = SetField(set())
 
 	field1 = Field(int, 0)
 	field2 = Field(dict, {})
