@@ -20,7 +20,7 @@ class Field(object):
         self.__parent__ = None
         if not (inspect.isroutine(default) or
                 isinstance(default, self.__f_type__)):
-            self.default = self._normalize_value(default, self.__parent__)
+            self.default = self._convert_to_f_type(default, self.__parent__)
         else:
             self.default = default
 
@@ -40,9 +40,9 @@ class Field(object):
     def normalize_value(self, value, parent=None, presistence=False):
         if isinstance(value, self.__f_type__):
             return value
-        return self._normalize_value(value, parent, presistence)
+        return self._convert_to_f_type(value, parent, presistence)
 
-    def _normalize_value(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, parent=None, persistence=False):
         if value is None:
             return self._return_none()
         return self.__f_type__(value)
@@ -76,11 +76,11 @@ class StrField(Field):
     def __init__(self, default=None, allow_none=True):
         super(StrField, self).__init__(default=default, allow_none=allow_none)
 
-    def _normalize_value(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, parent=None, persistence=False):
         if isinstance(value, unicode):
             return value.encode("utf8", "ignore")
         else:
-            return super(StrField, self)._normalize_value(
+            return super(StrField, self)._convert_to_f_type(
                 value, parent, persistence
             )
 
@@ -94,11 +94,11 @@ class UnicodeField(Field):
             default=default, allow_none=allow_none
         )
 
-    def _normalize_value(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, parent=None, persistence=False):
         if isinstance(value, str):
             return value.decode("utf8", "ignore")
         else:
-            return super(UnicodeField, self)._normalize_value(
+            return super(UnicodeField, self)._convert_to_f_type(
                 value, parent, persistence
             )
 
@@ -110,13 +110,13 @@ class DateField(Field):
     def __init__(self, default=None, allow_none=True):
         super(DateField, self).__init__(default=default, allow_none=allow_none)
 
-    def _normalize_value(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, parent=None, persistence=False):
         if isinstance(value, numbers.Number):
             return datetime.datetime.fromtimestamp(value).date()
         elif isinstance(value, basestring):
             return datetime.datetime.strptime(value, "%Y-%m-%d").date()
         else:
-            return super(DateField, self)._normalize_value(
+            return super(DateField, self)._convert_to_f_type(
                 value, parent, persistence
             )
 
@@ -130,7 +130,7 @@ class DateTimeField(Field):
             default=default, allow_none=allow_none
         )
 
-    def _normalize_value(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, parent=None, persistence=False):
         if isinstance(value, basestring):
             if value.find("T") != -1:
                 value = datetime.datetime.strptime(
@@ -141,7 +141,7 @@ class DateTimeField(Field):
         elif isinstance(value, numbers.Number):
             value = datetime.datetime.fromtimestamp(value)
         else:
-            value = super(DateTimeField, self)._normalize_value(
+            value = super(DateTimeField, self)._convert_to_f_type(
                 value, parent, persistence
             )
         return value
@@ -154,12 +154,22 @@ class ListField(Field):
     def __init__(self, default=None, allow_none=True):
         super(ListField, self).__init__(default=default, allow_none=allow_none)
 
-    def _normalize_value(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, parent=None, persistence=False):
         if value is None:
             return self._return_none()
         elif isinstance(value, (tuple, set)):
             return list(value)
         return [value]
+
+
+class SetField(Field):
+
+    __f_type__ = set
+
+    def normalize_value(self, value):
+        if isinstance(value, set):
+            return list(value)
+        return list(self._convert_to_f_type(value))
 
 
 class ModelField(Field):
@@ -178,14 +188,14 @@ class ModelField(Field):
             )
         return value
 
-    def _normalize_value(self, value, parent, persistence=False):
+    def _convert_to_f_type(self, value, parent, persistence=False):
         if isinstance(value, dict):
             return self.__f_type__(
                 __parent__=parent, __persistence__=persistence,
                 __fieldname__=self.__field_name__, **value
             )
         else:
-            return super(ModelField, self)._normalize_value(
+            return super(ModelField, self)._convert_to_f_type(
                 value, parent, persistence
             )
 
@@ -197,7 +207,7 @@ class ListModelField(ListField):
 
     def get_default(self, parent, persistence):
         if self.default:
-            value = self._normalize_value(self.default, parent, persistence)
+            value = self._convert_to_f_type(self.default, parent, persistence)
         else:
             value = [self.submodel(
                 __parent__=parent, __persistence__=persistence,
@@ -205,11 +215,11 @@ class ListModelField(ListField):
             )]
         return value
 
-    def _normalize_value(self, value, parent, persistence=False):
+    def _convert_to_f_type(self, value, parent, persistence=False):
         if value is None:
             return self._return_none()
         normalized_values = []
-        for model_instance in super(ListModelField, self)._normalize_value(
+        for model_instance in super(ListModelField, self)._convert_to_f_type(
             value, parent, persistence
         ):
             if not isinstance(model_instance, self.submodel):

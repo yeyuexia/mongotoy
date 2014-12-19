@@ -7,7 +7,7 @@ import datetime
 
 from mongotoy.libs.fields import (
     Field, IntField, FloatField, StrField, UnicodeField,
-    DateField, DateTimeField, ListField
+    DateField, DateTimeField, ListField, SetField
 )
 
 
@@ -21,7 +21,7 @@ class BaseTestField(unittest.TestCase):
     def setUp(self):
         if self._field is not None:
             self.field = self._field(
-                self._default_value, self._allow_none
+                default=self._default_value, allow_none=self._allow_none
             )
 
     def test_type(self):
@@ -96,6 +96,13 @@ class TestListField(BaseTestField):
     _field_type = list
     _default_value = [2, 3]
     _test_values = [(set([1, 2, 3]), [1, 2, 3]), ((2, 4, 5), [2, 4, 5])]
+
+
+class TestSetField(BaseTestField):
+    _field = SetField
+    _field_type = set
+    _default_value = set([1])
+    _test_values = [((11, 11, 22), [11, 22])]
 
 
 if __name__ == "__main__":
