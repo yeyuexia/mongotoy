@@ -7,7 +7,7 @@ import datetime
 
 #import mock
 
-from mongotoy.libs.apis import Model, SubModel
+from mongotoy.libs.models import Model, SubModel
 from mongotoy.libs.query import Query
 from mongotoy.libs.fields import (
     Field, StrField, ListModelField, IntField,
