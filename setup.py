@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="mongotoy",
-    version="0.01",
+    version="0.2",
     description="Simple ORM for Mongo",
     long_description="https://github.com/yeyuexia/mongotoy/blob/master/README.md",
     url="https://github.com/yeyuexia/mongotoy",
