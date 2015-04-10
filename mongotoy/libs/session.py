@@ -111,12 +111,12 @@ def get_session():
 
 
 def _insert(session, models):
-    for collection_name, contexts in models.iteritems():
+    for collection, contexts in models.iteritems():
         commands = [m.to_dict() for m in contexts]
         for command in commands:
             del command[ID]
         ids = session.execute(
-            collection_name, INSERT, dict(doc_or_docs=commands)
+            collection, INSERT, dict(doc_or_docs=commands)
         )
         for model, model_id in zip(contexts, ids):
             model._id = model_id
