@@ -3,12 +3,12 @@
 import unittest
 import datetime
 
-#import mock
 
 from mongotoy.libs.fields import (
     Field, IntField, FloatField, StrField, UnicodeField,
     DateField, DateTimeField, ListField, SetField
 )
+from mongotoy.libs.containers import ToyList
 
 
 class BaseTestField(unittest.TestCase):
@@ -93,7 +93,7 @@ class TestDateField(BaseTestField):
 
 class TestListField(BaseTestField):
     _field = ListField
-    _field_type = list
+    _field_type = ToyList
     _default_value = [2, 3]
     _test_values = [(set([1, 2, 3]), [1, 2, 3]), ((2, 4, 5), [2, 4, 5])]
 

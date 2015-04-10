@@ -12,7 +12,7 @@ class BaseMetaClass(type):
         new_class = super(BaseMetaClass, cls).__new__(cls, name, bases, attrs)
         for attr_key, attr_value in attrs.iteritems():
             if isinstance(attr_value, Field):
-                attr_value.__parent__ = new_class
+                attr_value.__lord__ = new_class
         return new_class
 
 

@@ -55,8 +55,8 @@ def push_flush_queue(model):
 
 
 def _get_parent(model):
-    while hasattr(model, "__parent__"):
-        model = model.__parent__
+    while hasattr(model, "__lord__"):
+        model = model.__lord__
     return model
 
 

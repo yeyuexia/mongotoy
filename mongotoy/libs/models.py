@@ -231,12 +231,12 @@ class Model(BaseModel):
 
 
 class SubModel(BaseModel):
-    __parent__ = None
+    __lord__ = None
     __fieldname__ = None
 
     __metaclass__ = BaseMetaClass
 
     def __init__(self, *args, **kwargs):
-        self.__parent__ = kwargs.pop("__parent__", None)
+        self.__lord__ = kwargs.pop("__lord__", None)
         self.__fieldname__ = kwargs.pop("__fieldname__", None)
         super(SubModel, self).__init__(*args, **kwargs)

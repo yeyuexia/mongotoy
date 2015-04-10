@@ -173,7 +173,7 @@ class SetField(Field):
     def normalize_value(self, value, lord=None, presistence=False):
         if isinstance(value, set):
             return ToyList(lord, value)
-        return ToyList(self._convert_to_f_type(value))
+        return ToyList(lord, self._convert_to_f_type(value, lord, presistence))
 
 
 class ModelField(Field):

@@ -8,7 +8,7 @@ from queue import push_flush_queue
 def modified(func):
     def _(self, *args):
         origin = copy.copy(self)
-        ret = func(*args)
+        ret = func(self, *args)
         if origin != self:
             push_flush_queue(self.__lord__)
         return ret
