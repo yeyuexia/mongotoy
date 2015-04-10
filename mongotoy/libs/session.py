@@ -25,18 +25,18 @@ class Session(object):
         for db, models in mapper.iteritems():
             self.mapper[db] = [get_collection_name(model) for model in models]
 
-    def _search_propable_db(self, collection_name):
+    def _search_propable_db(self, collection):
         """
-        get propable database by collection_name
+        get propable database by collection
         """
-        if collection_name in self._lookup_table:
-            return self._lookup_table[collection_name]
+        if collection in self._lookup_table:
+            return self._lookup_table[collection]
         for db, collections in self.mapper.iteritems():
-            if collection_name in collections:
-                self._lookup_table[collection_name] = db
+            if collection in collections:
+                self._lookup_table[collection] = db
                 return db
         raise ValueError(
-            "not get the collection named %s in collection mapper" % collection_name
+            "not get the collection named %s in collection mapper" % collection
         )
 
     def execute(self, collection, func, fields):
@@ -110,6 +110,31 @@ def get_session():
     return session
 
 
+def _insert(session, models):
+    for collection_name, contexts in models.iteritems():
+        commands = [m.to_dict() for m in contexts]
+        for command in commands:
+            del command[ID]
+        ids = session.execute(
+            collection_name, INSERT, dict(doc_or_docs=commands)
+        )
+        for model, model_id in zip(contexts, ids):
+            model._id = model_id
+
+
+def _update(session, models):
+    for model in models:
+        update_command = model.to_dict()
+        del update_command[ID]
+        session.execute(
+            model.__collection__, UPDATE,
+            dict(
+                spec={ID: model._id},
+                document=Set(update_command).compile()
+            )
+        )
+
+
 def flush():
     """
     push all change to mongo db. It is a block operator so would be takes some time.
@@ -122,25 +147,10 @@ def flush():
             if model._id:
                 update_models.append(model)
             else:
-                collection_name = model.__collectionname__
-                if collection_name not in insert_models:
-                    insert_models[collection_name] = []
-                insert_models[collection_name].append(model)
-        for collection_name, contexts in insert_models.iteritems():
-            commands = [m.to_dict() for m in contexts]
-            for command in commands:
-                del command[ID]
-            ids = session.execute(
-                collection_name, INSERT, dict(doc_or_docs=commands)
-            )
-            for model, model_id in zip(contexts, ids):
-                model._id = model_id
-        for model in update_models:
-            update_command = model.to_dict()
-            del update_command[ID]
-            session.execute(
-                model.__collectionname__, UPDATE,
-                dict(spec={ID: model._id},
-                     document=Set(update_command).compile())
-            )
+                collection = model.__collection__
+                if collection not in insert_models:
+                    insert_models[collection] = []
+                insert_models[collection].append(model)
+        _insert(session, insert_models)
+        _update(session, update_models)
         flush_queue.clear()
