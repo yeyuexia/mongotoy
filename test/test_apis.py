@@ -48,7 +48,7 @@ class TestModelApi(unittest.TestCase):
 
     def test_collection_name(self):
         test_model = TestModel()
-        self.assertEqual(test_model.__collectionname__, "test_model")
+        self.assertEqual(test_model.__collection__, "test_model")
 
     def test_default_to_dict(self):
         test_model = TestModel()
@@ -89,7 +89,7 @@ class TestModelApi(unittest.TestCase):
         with self.assertRaises(KeyError):
             TestModel.assert_valid_field("field5")
         with self.assertRaises(KeyError):
-            TestModel.assert_valid_field("__collectionname__")
+            TestModel.assert_valid_field("__collection__")
 
     def test_generate_query_context(self):
         now = datetime.datetime.now()

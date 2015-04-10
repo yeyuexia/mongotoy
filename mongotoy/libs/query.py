@@ -138,7 +138,7 @@ class Query(BaseQuery):
         return self.model(__persistence__=True, **record)
 
     def _compile_context(self, operation=QUERY_FIND):
-        collection = self.model.__collectionname__
+        collection = self.model.__collection__
         return (collection, operation, self.get_commands())
 
     def execute_context(self, context):
@@ -173,7 +173,7 @@ class Query(BaseQuery):
         return get_session().execute(*update.compile_context())
 
     def delete(self):
-        collection = self.model.__collectionname__
+        collection = self.model.__collection__
         get_session().execute(
             collection, DELETE, dict(spec_or_id=self.get_commands()["spec"])
         )
@@ -191,7 +191,7 @@ class Query(BaseQuery):
 class QueryOne(BaseQuery):
 
     def _compile_context(self):
-        collection = self.model.__collectionname__
+        collection = self.model.__collection__
         return (collection, QUERY_FIND, self.get_commands())
 
     def execute_context(self, context):
@@ -235,5 +235,5 @@ class Update(object):
         )
 
     def compile_context(self):
-        collection = self.model.__collectionname__
+        collection = self.model.__collection__
         return (collection, UPDATE, self.get_commands())

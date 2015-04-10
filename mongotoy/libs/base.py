@@ -18,6 +18,6 @@ class BaseMetaClass(type):
 
 class MetaClass(BaseMetaClass):
     def __new__(cls, name, bases, attrs):
-        if "__collectionname__" not in attrs:
-            attrs["__collectionname__"] = get_collection_name(name)
+        if "__collection__" not in attrs:
+            attrs["__collection__"] = get_collection_name(name)
         return super(MetaClass, cls).__new__(cls, name, bases, attrs)

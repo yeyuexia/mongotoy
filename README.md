@@ -119,11 +119,11 @@ Now mongotoy support all logical, comparison, element and update operators.
 
 ```
 class Test(Model):
-	__collectionname__ = "test_collection"
+	__collection__ = "test_collection"
 	pass
 	
 ```
-The attribute `__collectionname__` used for reset collection name. 
+The attribute `__collection__` used for reset collection name. 
 Notes: when you custom the collection name, you must declear collection name instead Model name in collection mapper.
 
 ```

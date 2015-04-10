@@ -46,16 +46,13 @@ class BaseModel(object):
                 super(BaseModel, self).__setattr__(key, value)
                 if not self.__persistence__:
                     self.__spec__.add(key)
-                    self.push_flush_queue(self)
+                    push_flush_queue(self)
             else:
                 # TODO:
 
                 super(BaseModel, self).__setattr__(key, value)
         else:
             super(BaseModel, self).__setattr__(key, value)
-
-    def push_flush_queue(self, model):
-        push_flush_queue(model)
 
     @classmethod
     def assert_valid_field_name(cls, key):
@@ -162,7 +159,7 @@ class Model(BaseModel):
     eg:
 
         class TestModel(Model):
-            __collectionname__ = "test_model"
+            __collection__ = "test_model"
 
             class SubModel1(SubModel):
                 sub_field1 = Field(str, "unknown")
@@ -172,7 +169,7 @@ class Model(BaseModel):
             field3 = Field(SubModel)
     """
 
-    __collectionname__ = None
+    __collection__ = None
     __metaclass__ = MetaClass
     __engine__ = None
     _id = Field(ObjectId, None)
@@ -220,13 +217,13 @@ class Model(BaseModel):
         command = self.to_dict()
         del command[ID]
         _id = get_session().execute(
-            self.__collectionname__, INSERT, dict(doc_or_docs=command)
+            self.__collection__, INSERT, dict(doc_or_docs=command)
         )
         self._id = _id
 
     def delete(self):
         get_session().execute(
-            self.__collectionname__, DELETE, dict(spec_or_id={ID: self._id})
+            self.__collection__, DELETE, dict(spec_or_id={ID: self._id})
         )
 
     def to_dict(self):
@@ -245,11 +242,3 @@ class SubModel(BaseModel):
         self.__parent__ = kwargs.pop("__parent__", None)
         self.__fieldname__ = kwargs.pop("__fieldname__", None)
         super(SubModel, self).__init__(*args, **kwargs)
-
-    def push_flush_queue(self, model):
-        if self.__parent__ is None:
-            return
-        model = self
-        while isinstance(model, SubModel) and model.__parent__:
-            model = model.__parent__
-        super(SubModel, self).push_flush_queue(model)
