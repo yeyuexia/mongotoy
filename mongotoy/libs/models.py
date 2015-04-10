@@ -17,7 +17,6 @@ class BaseModel(object):
     __persistence__ = False
 
     def __init__(self, *args, **kwargs):
-        self.__spec__ = set()
         self.__persistence__ = kwargs.get("__persistence__", False)
         for arg in args:
             pass
@@ -45,7 +44,6 @@ class BaseModel(object):
                     ))
                 super(BaseModel, self).__setattr__(key, value)
                 if not self.__persistence__:
-                    self.__spec__.add(key)
                     push_flush_queue(self)
             else:
                 # TODO:
