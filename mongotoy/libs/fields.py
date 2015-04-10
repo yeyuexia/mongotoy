@@ -5,6 +5,8 @@ import numbers
 import inspect
 import datetime
 
+from .containers import ToyList
+
 
 class Field(object):
 
@@ -17,10 +19,10 @@ class Field(object):
         assert inspect.isclass(self.__f_type__), "unknown type for field"
         self._allow_none = allow_none
         self.__field_name__ = None
-        self.__parent__ = None
+        self.__lord__ = None
         if not (inspect.isroutine(default) or
                 isinstance(default, self.__f_type__)):
-            self.default = self._convert_to_f_type(default, self.__parent__)
+            self.default = self._convert_to_f_type(default, self.__lord__)
         else:
             self.default = default
 
@@ -30,19 +32,19 @@ class Field(object):
                 "field %s could not be None" % self.__field_name__
             )
 
-    def get_default(self, parent=None, persistence=False):
+    def get_default(self, lord=None, persistence=False):
         if inspect.isroutine(self.default):
             value = self.default()
         else:
             value = copy.deepcopy(self.default)
         return value
 
-    def normalize_value(self, value, parent=None, presistence=False):
+    def normalize_value(self, value, lord=None, presistence=False):
         if isinstance(value, self.__f_type__):
             return value
-        return self._convert_to_f_type(value, parent, presistence)
+        return self._convert_to_f_type(value, lord, presistence)
 
-    def _convert_to_f_type(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, lord=None, persistence=False):
         if value is None:
             return self._return_none()
         return self.__f_type__(value)
@@ -66,7 +68,9 @@ class FloatField(Field):
     __f_type__ = float
 
     def __init__(self, default=None, allow_none=True):
-        super(FloatField, self).__init__(default=default, allow_none=allow_none)
+        super(FloatField, self).__init__(
+            default=default, allow_none=allow_none
+        )
 
 
 class StrField(Field):
@@ -76,12 +80,12 @@ class StrField(Field):
     def __init__(self, default=None, allow_none=True):
         super(StrField, self).__init__(default=default, allow_none=allow_none)
 
-    def _convert_to_f_type(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, lord=None, persistence=False):
         if isinstance(value, unicode):
             return value.encode("utf8", "ignore")
         else:
             return super(StrField, self)._convert_to_f_type(
-                value, parent, persistence
+                value, lord, persistence
             )
 
 
@@ -94,12 +98,12 @@ class UnicodeField(Field):
             default=default, allow_none=allow_none
         )
 
-    def _convert_to_f_type(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, lord=None, persistence=False):
         if isinstance(value, str):
             return value.decode("utf8", "ignore")
         else:
             return super(UnicodeField, self)._convert_to_f_type(
-                value, parent, persistence
+                value, lord, persistence
             )
 
 
@@ -110,14 +114,14 @@ class DateField(Field):
     def __init__(self, default=None, allow_none=True):
         super(DateField, self).__init__(default=default, allow_none=allow_none)
 
-    def _convert_to_f_type(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, lord=None, persistence=False):
         if isinstance(value, numbers.Number):
             return datetime.datetime.fromtimestamp(value).date()
         elif isinstance(value, basestring):
             return datetime.datetime.strptime(value, "%Y-%m-%d").date()
         else:
             return super(DateField, self)._convert_to_f_type(
-                value, parent, persistence
+                value, lord, persistence
             )
 
 
@@ -130,7 +134,7 @@ class DateTimeField(Field):
             default=default, allow_none=allow_none
         )
 
-    def _convert_to_f_type(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, lord=None, persistence=False):
         if isinstance(value, basestring):
             if value.find("T") != -1:
                 value = datetime.datetime.strptime(
@@ -142,34 +146,34 @@ class DateTimeField(Field):
             value = datetime.datetime.fromtimestamp(value)
         else:
             value = super(DateTimeField, self)._convert_to_f_type(
-                value, parent, persistence
+                value, lord, persistence
             )
         return value
 
 
 class ListField(Field):
 
-    __f_type__ = list
+    __f_type__ = ToyList
 
     def __init__(self, default=None, allow_none=True):
         super(ListField, self).__init__(default=default, allow_none=allow_none)
 
-    def _convert_to_f_type(self, value, parent=None, persistence=False):
+    def _convert_to_f_type(self, value, lord=None, persistence=False):
         if value is None:
             return self._return_none()
-        elif isinstance(value, (tuple, set)):
-            return list(value)
-        return [value]
+        elif isinstance(value, (tuple, set, list)):
+            return ToyList(lord, value)
+        return ToyList(lord, [value])
 
 
 class SetField(Field):
 
     __f_type__ = set
 
-    def normalize_value(self, value):
+    def normalize_value(self, value, lord=None, presistence=False):
         if isinstance(value, set):
-            return list(value)
-        return list(self._convert_to_f_type(value))
+            return ToyList(lord, value)
+        return ToyList(self._convert_to_f_type(value))
 
 
 class ModelField(Field):
@@ -177,26 +181,26 @@ class ModelField(Field):
     def __init__(self, submodel, default=None, allow_none=True):
         super(ModelField, self).__init__(submodel, default, allow_none)
 
-    def get_default(self, parent, persistence):
+    def get_default(self, lord, persistence):
         if self.default:
             value = copy.deepcopy(self.default)
-            value.__parent__ = parent
+            value.__lord__ = lord
         else:
             value = self.__f_type__(
-                __parent__=parent, __persistence__=persistence,
+                __lord__=lord, __persistence__=persistence,
                 __fieldname__=self.__field_name__
             )
         return value
 
-    def _convert_to_f_type(self, value, parent, persistence=False):
+    def _convert_to_f_type(self, value, lord, persistence=False):
         if isinstance(value, dict):
             return self.__f_type__(
-                __parent__=parent, __persistence__=persistence,
+                __lord__=lord, __persistence__=persistence,
                 __fieldname__=self.__field_name__, **value
             )
         else:
             return super(ModelField, self)._convert_to_f_type(
-                value, parent, persistence
+                value, lord, persistence
             )
 
 
@@ -205,30 +209,30 @@ class ListModelField(ListField):
         self.submodel = submodel
         super(ListModelField, self).__init__(default, allow_none)
 
-    def get_default(self, parent, persistence):
+    def get_default(self, lord, persistence):
         if self.default:
-            value = self._convert_to_f_type(self.default, parent, persistence)
+            value = self._convert_to_f_type(self.default, lord, persistence)
         else:
             value = [self.submodel(
-                __parent__=parent, __persistence__=persistence,
+                __lord__=lord, __persistence__=persistence,
                 __fieldname__=self.__field_name__
             )]
         return value
 
-    def _convert_to_f_type(self, value, parent, persistence=False):
+    def _convert_to_f_type(self, value, lord, persistence=False):
         if value is None:
             return self._return_none()
-        normalized_values = []
+        values = ToyList(lord, [])
         for model_instance in super(ListModelField, self)._convert_to_f_type(
-            value, parent, persistence
+            value, lord, persistence
         ):
             if not isinstance(model_instance, self.submodel):
                 if isinstance(model_instance, dict):
                     model_instance = self.submodel(
-                        __parent__=parent, __persistence__=persistence,
+                        __lord__=lord, __persistence__=persistence,
                         __fieldname__=self.__field_name__, **model_instance
                     )
                 else:
                     raise ValueError()
-            normalized_values.append(model_instance)
-        return normalized_values
+            values.append(model_instance)
+        return values
