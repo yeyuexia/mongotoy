@@ -16,15 +16,16 @@ class BaseQuery(object):
     base Query object.
     """
 
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, spec=None, sort=None,
+                 fields=None, skip=0, *args, **kwargs):
         self.parent = None
         self.model = model
         self.commands = dict()
-        self.commands["spec"] = kwargs.get("spec")
-        self.commands["sort"] = kwargs.get("sort")
-        self.commands["fields"] = kwargs.get("fields")
+        self.commands["spec"] = spec or dict()
+        self.commands["sort"] = sort or dict()
+        self.commands["fields"] = fields or list()
         try:
-            self.commands["skip"] = int(kwargs.get("skip", 0))
+            self.commands["skip"] = int(skip)
         except ValueError:
             raise ValueError("skip must be int")
 
