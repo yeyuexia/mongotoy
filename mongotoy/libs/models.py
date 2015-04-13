@@ -20,54 +20,41 @@ class BaseModel(object):
         self.__persistence__ = kwargs.get("__persistence__", False)
         for arg in args:
             pass
-        for field, field_instance in self.__class__.__dict__.iteritems():
-            if isinstance(field_instance, Field):
-                if field in kwargs:
-                    v = kwargs.pop(field)
-                else:
-                    v = field_instance.get_default(self, self.__persistence__)
-                setattr(self, field, v)
+        for field in self.__fields__:
+            if field in kwargs:
+                v = kwargs.pop(field)
+            else:
+                v = getattr(self, field).get_default(
+                    self, self.__persistence__
+                )
+            setattr(self, field, v)
         self.__persistence__ = False
 
     def __setattr__(self, key, value):
-        if key in self.__class__.__dict__:
-            field = self.__class__.__dict__[key]
-            if isinstance(field, Field):
-                try:
-                    value = field.normalize_value(
-                        value, self, self.__persistence__
-                    )
-                except Exception:
-                    raise TypeError("%s.%s, value:%s, except %s" % (
-                        self.__class__.__name__,
-                        key, value, field.__f_type__
-                    ))
-                super(BaseModel, self).__setattr__(key, value)
-                if not self.__persistence__:
-                    push_flush_queue(self)
-            else:
-                # TODO:
-
-                super(BaseModel, self).__setattr__(key, value)
-        else:
-            super(BaseModel, self).__setattr__(key, value)
+        if key in self.__fields__:
+            field = getattr(self.__class__, key)
+            try:
+                value = field.normalize_value(
+                    value, self, self.__persistence__
+                )
+            except Exception:
+                raise TypeError("%s.%s, value:%s, except %s" % (
+                    self.__class__.__name__,
+                    key, value, field.__f_type__
+                ))
+            if not self.__persistence__:
+                push_flush_queue(self)
+        super(BaseModel, self).__setattr__(key, value)
 
     @classmethod
-    def assert_valid_field_name(cls, key):
-        if not (hasattr(cls, key) and isinstance(getattr(cls, key), Field)):
+    def assert_valid_field(cls, field):
+        fields = field.split(".", 1)
+        if fields[0] not in cls.__fields__:
             raise KeyError("Model %s does not has field named %s" % (
-                cls.__name__, key
+                cls.__name__, field[0]
             ))
-
-    @classmethod
-    def assert_valid_field(cls, key):
-        if key.find('.') == -1:
-            cls.assert_valid_field_name(key)
-        else:
-            key, field_key = key.split(".", 1)
-            cls.assert_valid_field_name(key)
-            getattr(cls, key).assert_valid_field(field_key)
-        return True
+        if len(fields) > 1:
+            getattr(cls, field[0]).assert_valid_field(fields[1])
 
     @classmethod
     def _generate_query_context(cls, *args, **kwargs):
