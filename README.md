@@ -14,17 +14,15 @@ from mongotoy.libs.fields import IntField, FloatField, ModelField, DateTimeField
 
 class TestModel(Model):
 
-	class ModelField(SubModel):
+	class SubField(SubModel):
 		field1 = FloatField(0)
 		field2 = SetField(set())
 
-	field1 = Field(int, 0)
-	field2 = Field(dict, {})
-	field3 = Field(ModelField)
-	field4 = Field(datetime.datetime, datetime.datetime.now)
+	field1 = IntField(0)
+	field2 = ModelField(SubField)
+	field3 = DateTimeField(datetime.datetime.now)
 
 ```
-
 * Build connection with Mongo DB with host and port, and register TestModel
 
 ```
@@ -49,7 +47,7 @@ to load or reload mapper.
 
 ```
 record = TestModel(field1=10, field2={1: 2},
-				   field3=TestModel.ModelField(field1=3.0, field2=set([1,2,3])))
+				   field3=TestModel.SubField(field1=3.0, field2=set([1,2,3])))
 ```
 * Save record
 
@@ -57,6 +55,7 @@ record = TestModel(field1=10, field2={1: 2},
 flush()
 ```
 Notes: all change need invoke flush method when you need to submit it to mongo server.
+
 * Query
 
 ```
@@ -84,7 +83,6 @@ record = model.to_dict()
 ```
 TestModel.query(field1=2).update(field1=1)
 ```
-Notes: the method update invoke immediately, you don't need invoke flush() after update.
 
 * Delete instance
 
@@ -96,8 +94,24 @@ instance.delete()
 ```
 TestModel.query(field1=1).delete()
 ```
-Notes: the method delete invoke immediately, you don't need invoke flush() after delete.
+Notes: the method `delete()` and `update()` would invoke immediately, you don't need call `flush()` after invoke them.
 
+## Fields
+In `mongotoy`, Field name would auto map to the field name in mongo collection. 
+
+all field class has same initialize method like
+
+```
+Field(default=None, allow_none=True)
+``` 
+
+except `ModelField` and `ListModelField`:
+
+```
+ModelField(submodel, default=None, allow_none=True)
+
+ListModelField(submodel, default=None, allow_none=True)
+```
 ## Operators
 You can use mongo operators in mongotoy
 
@@ -107,6 +121,7 @@ from mongotoy.libs.operators import Or, And, Type
 cursor = TestModel.query(Or(And(field1=1, field2=2), Type("field2", float), field1=5))
 ```
  and in update
+
 ```
 from mongotoy.libs.operators import Unset, Set
 
